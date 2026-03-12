@@ -14,14 +14,18 @@ const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
 
 // Array to store the uploaded files URIs
 let uploadedFiles: any[] = [];
+let isUploadingManuals = false;
 
 // Function to upload PDFs to Gemini File API
 async function uploadManuals() {
+  if (isUploadingManuals) return;
+  isUploadingManuals = true;
   console.log('Iniciando upload dos manuais em PDF para o Gemini...');
   const manualsDir = path.join(__dirname, 'manuals');
   
   if (!fs.existsSync(manualsDir)) {
     console.log('Diretório "manuals" não encontrado. Crie a pasta e adicione os PDFs.');
+    isUploadingManuals = false;
     return;
   }
 
@@ -29,6 +33,7 @@ async function uploadManuals() {
   
   if (files.length === 0) {
     console.log('Nenhum PDF encontrado na pasta "manuals".');
+    isUploadingManuals = false;
     return;
   }
 
@@ -38,18 +43,33 @@ async function uploadManuals() {
     const filePath = path.join(manualsDir, file);
     console.log(`Fazendo upload de ${file}...`);
     try {
-      const uploadedFile = await ai.files.upload({
+      let uploadedFile = await ai.files.upload({
         file: filePath,
         mimeType: 'application/pdf',
       });
+      
+      console.log(`Upload concluído: ${uploadedFile.name}. Aguardando processamento...`);
+      
+      // Aguardar o processamento do arquivo no Gemini
+      while (uploadedFile.state === 'PROCESSING') {
+        await new Promise(resolve => setTimeout(resolve, 5000));
+        uploadedFile = await ai.files.get({ name: uploadedFile.name });
+      }
+      
+      if (uploadedFile.state === 'FAILED') {
+        console.error(`Falha ao processar o arquivo ${file} no Gemini.`);
+        continue;
+      }
+
       newUploadedFiles.push(uploadedFile);
-      console.log(`Upload concluído: ${uploadedFile.name}`);
+      console.log(`Arquivo ${uploadedFile.name} processado e pronto para uso!`);
     } catch (error) {
       console.error(`Erro ao fazer upload de ${file}:`, error);
     }
   }
   
   uploadedFiles = newUploadedFiles;
+  isUploadingManuals = false;
   console.log('Todos os manuais foram carregados com sucesso e estão prontos para uso!');
 }
 
@@ -67,31 +87,55 @@ async function startServer() {
   // API Route for Chat
   app.post('/api/chat', async (req, res) => {
     try {
+      if (isUploadingManuals) {
+        return res.json({ text: "Estou lendo e processando os manuais da franquia no momento. Isso pode levar alguns minutos. Por favor, tente perguntar novamente em instantes." });
+      }
+
       const { message, history } = req.body;
 
       // Format history for Gemini API
-      const contents = history.map((msg: any) => ({
-        role: msg.role === 'user' ? 'user' : 'model',
-        parts: [{ text: msg.content }]
-      }));
+      const contents = history.map((msg: any, index: number) => {
+        const parts: any[] = [{ text: msg.content }];
+        
+        // Append PDFs to the first user message in the conversation
+        if (index === 0 && msg.role === 'user') {
+          for (const file of uploadedFiles) {
+            parts.push({
+              fileData: {
+                fileUri: file.uri,
+                mimeType: file.mimeType
+              }
+            });
+          }
+        }
+        
+        return {
+          role: msg.role === 'user' ? 'user' : 'model',
+          parts: parts
+        };
+      });
       
       // Add the new user message
-      contents.push({ role: 'user', parts: [{ text: message }] });
+      const newUserParts: any[] = [{ text: message }];
+      
+      // If there is no history, this is the first message, so append PDFs here
+      if (history.length === 0) {
+        for (const file of uploadedFiles) {
+          newUserParts.push({
+            fileData: {
+              fileUri: file.uri,
+              mimeType: file.mimeType
+            }
+          });
+        }
+      }
+      
+      contents.push({ role: 'user', parts: newUserParts });
 
-      // Build System Instruction with Text + PDFs
+      // Build System Instruction
       const systemParts: any[] = [
         { text: SYSTEM_INSTRUCTION }
       ];
-
-      // Append uploaded PDFs to the system instruction
-      for (const file of uploadedFiles) {
-        systemParts.push({
-          fileData: {
-            fileUri: file.uri,
-            mimeType: file.mimeType
-          }
-        });
-      }
 
       const response = await ai.models.generateContent({
         model: 'gemini-3-flash-preview',
