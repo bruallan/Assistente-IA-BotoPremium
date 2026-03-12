@@ -13,7 +13,7 @@ export default function App() {
     {
       id: '1',
       role: 'model',
-      content: 'Olá! Sou o assistente virtual da franqueadora. Como posso te ajudar hoje com a operação da sua unidade?'
+      content: 'Olá! Sou o assistente virtual da BotoPremium. Como posso te ajudar hoje com a operação da sua unidade?'
     }
   ]);
   const [input, setInput] = useState('');
@@ -75,27 +75,19 @@ export default function App() {
   };
 
   return (
-    <div className="flex flex-col h-screen bg-slate-50 font-sans">
+    <div className="flex flex-col h-screen bg-zinc-950 font-sans">
       {/* Header */}
-      <header className="bg-white border-b border-slate-200 px-6 py-4 flex items-center justify-between shadow-sm z-10">
+      <header className="bg-zinc-900 border-b border-zinc-800 px-6 py-4 flex items-center justify-between shadow-sm z-10">
         <div className="flex items-center gap-3">
-          <div className="bg-indigo-600 p-2 rounded-lg">
-            <Bot className="w-6 h-6 text-white" />
+          <div className="bg-yellow-600 p-2 rounded-lg">
+            <Bot className="w-6 h-6 text-zinc-950" />
           </div>
           <div>
-            <h1 className="text-xl font-semibold text-slate-800 tracking-tight">Suporte ao Franqueado</h1>
-            <p className="text-sm text-slate-500">Assistente Virtual Oficial</p>
+            <h1 className="text-xl font-semibold text-gray-100 tracking-tight">Suporte ao Franqueado</h1>
+            <p className="text-sm text-yellow-500/80">Assistente Virtual Oficial</p>
           </div>
         </div>
       </header>
-
-      {/* Info Banner */}
-      <div className="bg-indigo-50 border-b border-indigo-100 px-6 py-3 flex items-start gap-3 text-sm text-indigo-800">
-        <Info className="w-5 h-5 shrink-0 mt-0.5" />
-        <p>
-          <strong>Dica:</strong> Para personalizar a base de conhecimento deste protótipo, edite o arquivo <code className="bg-indigo-100 px-1.5 py-0.5 rounded text-indigo-900 font-mono">src/knowledge-base.ts</code>.
-        </p>
-      </div>
 
       {/* Chat Area */}
       <main className="flex-1 overflow-y-auto p-6 space-y-6">
@@ -107,7 +99,7 @@ export default function App() {
             >
               {/* Avatar */}
               <div className={`shrink-0 w-10 h-10 rounded-full flex items-center justify-center shadow-sm ${
-                msg.role === 'user' ? 'bg-slate-800 text-white' : 'bg-indigo-100 text-indigo-600 border border-indigo-200'
+                msg.role === 'user' ? 'bg-zinc-800 text-yellow-500 border border-zinc-700' : 'bg-yellow-600 text-zinc-950'
               }`}>
                 {msg.role === 'user' ? <User className="w-5 h-5" /> : <Bot className="w-5 h-5" />}
               </div>
@@ -115,13 +107,13 @@ export default function App() {
               {/* Message Bubble */}
               <div className={`max-w-[80%] rounded-2xl px-5 py-3.5 shadow-sm ${
                 msg.role === 'user' 
-                  ? 'bg-slate-800 text-white rounded-tr-sm' 
-                  : 'bg-white border border-slate-200 text-slate-800 rounded-tl-sm'
+                  ? 'bg-zinc-800 text-gray-200 rounded-tr-sm border border-zinc-700' 
+                  : 'bg-zinc-900 border border-yellow-500/30 text-gray-200 rounded-tl-sm'
               }`}>
                 {msg.role === 'user' ? (
                   <p className="whitespace-pre-wrap">{msg.content}</p>
                 ) : (
-                  <div className="prose prose-sm prose-slate max-w-none prose-p:leading-relaxed prose-pre:bg-slate-100 prose-pre:text-slate-800">
+                  <div className="prose prose-sm prose-invert max-w-none prose-p:leading-relaxed prose-pre:bg-zinc-800 prose-pre:text-gray-200 prose-a:text-yellow-500 hover:prose-a:text-yellow-400">
                     <ReactMarkdown>{msg.content}</ReactMarkdown>
                   </div>
                 )}
@@ -130,12 +122,11 @@ export default function App() {
           ))}
           {isLoading && (
             <div className="flex gap-4">
-              <div className="shrink-0 w-10 h-10 rounded-full bg-indigo-100 text-indigo-600 border border-indigo-200 flex items-center justify-center shadow-sm">
+              <div className="shrink-0 w-10 h-10 rounded-full bg-yellow-600 text-zinc-950 flex items-center justify-center shadow-sm">
                 <Bot className="w-5 h-5" />
               </div>
-              <div className="bg-white border border-slate-200 rounded-2xl rounded-tl-sm px-5 py-4 shadow-sm flex items-center gap-2">
-                <Loader2 className="w-4 h-4 text-indigo-600 animate-spin" />
-                <span className="text-sm text-slate-500 font-medium">Consultando manuais...</span>
+              <div className="bg-zinc-900 border border-yellow-500/30 rounded-2xl rounded-tl-sm px-5 py-4 shadow-sm flex items-center justify-center min-w-[60px]">
+                <Loader2 className="w-5 h-5 text-yellow-500 animate-spin" />
               </div>
             </div>
           )}
@@ -144,11 +135,11 @@ export default function App() {
       </main>
 
       {/* Input Area */}
-      <footer className="bg-white border-t border-slate-200 p-4">
+      <footer className="bg-zinc-900 border-t border-zinc-800 p-4">
         <div className="max-w-3xl mx-auto">
           <form 
             onSubmit={handleSubmit}
-            className="flex items-end gap-3 bg-slate-50 border border-slate-200 rounded-2xl p-2 focus-within:ring-2 focus-within:ring-indigo-500/20 focus-within:border-indigo-500 transition-all shadow-sm"
+            className="flex items-end gap-3 bg-zinc-950 border border-zinc-700 rounded-2xl p-2 focus-within:ring-1 focus-within:ring-yellow-500/50 focus-within:border-yellow-500/50 transition-all shadow-sm"
           >
             <textarea
               value={input}
@@ -160,18 +151,18 @@ export default function App() {
                 }
               }}
               placeholder="Pergunte sobre a operação, royalties, marketing..."
-              className="flex-1 max-h-32 min-h-[44px] bg-transparent border-0 focus:ring-0 resize-none py-2.5 px-3 text-slate-800 placeholder:text-slate-400"
+              className="flex-1 max-h-32 min-h-[44px] bg-transparent border-0 focus:ring-0 resize-none py-2.5 px-3 text-gray-200 placeholder:text-zinc-500"
               rows={1}
             />
             <button
               type="submit"
               disabled={!input.trim() || isLoading}
-              className="shrink-0 bg-indigo-600 text-white p-3 rounded-xl hover:bg-indigo-700 disabled:opacity-50 disabled:hover:bg-indigo-600 transition-colors shadow-sm"
+              className="shrink-0 bg-yellow-600 text-zinc-950 p-3 rounded-xl hover:bg-yellow-500 disabled:opacity-50 disabled:hover:bg-yellow-600 transition-colors shadow-sm"
             >
               <Send className="w-5 h-5" />
             </button>
           </form>
-          <p className="text-center text-xs text-slate-400 mt-3">
+          <p className="text-center text-xs text-zinc-500 mt-3">
             O assistente pode cometer erros. Verifique informações críticas nos manuais oficiais.
           </p>
         </div>
