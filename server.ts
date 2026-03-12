@@ -59,6 +59,11 @@ async function startServer() {
 
   app.use(express.json());
 
+  // Health check endpoint for keep-alive
+  app.get('/api/health', (req, res) => {
+    res.status(200).send('OK');
+  });
+
   // API Route for Chat
   app.post('/api/chat', async (req, res) => {
     try {
@@ -128,6 +133,15 @@ async function startServer() {
     
     // Re-upload every 24 hours (Gemini File API keeps files for 48h)
     setInterval(uploadManuals, 24 * 60 * 60 * 1000);
+
+    // Keep-alive ping to prevent Render free tier from sleeping
+    // Render sleeps after 15 minutes of inactivity. We ping every 14 minutes.
+    setInterval(() => {
+      const appUrl = process.env.APP_URL || `http://localhost:${PORT}`;
+      fetch(`${appUrl}/api/health`)
+        .then(res => console.log(`[Keep-Alive] Pinged ${appUrl} - Status: ${res.status}`))
+        .catch(err => console.error(`[Keep-Alive] Ping failed:`, err.message));
+    }, 14 * 60 * 1000);
   });
 }
 
