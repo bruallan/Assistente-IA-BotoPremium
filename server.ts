@@ -1,7 +1,7 @@
 import express from 'express';
 import { createServer as createViteServer } from 'vite';
 import { GoogleGenAI } from '@google/genai';
-import { SYSTEM_INSTRUCTION } from './src/knowledge-base.js';
+import { SYSTEM_INSTRUCTION } from './src/knowledge-base.ts';
 import path from 'path';
 import fs from 'fs';
 import { fileURLToPath } from 'url';
