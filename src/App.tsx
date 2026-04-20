@@ -1,11 +1,17 @@
 import { useState, useRef, useEffect } from 'react';
-import { Send, Bot, User, Loader2, Mail, KeyRound, LogOut } from 'lucide-react';
+import { Send, Bot, User, Loader2, Mail, KeyRound, LogOut, MessageSquare, Plus, Menu, X } from 'lucide-react';
 import ReactMarkdown from 'react-markdown';
 
 type Message = {
   id: string;
   role: 'user' | 'model';
   content: string;
+};
+
+type ChatHistory = {
+  id: string;
+  title: string;
+  updatedAt: any;
 };
 
 export default function App() {
@@ -18,21 +24,80 @@ export default function App() {
   const [isAuthLoading, setIsAuthLoading] = useState(false);
 
   // --- CHAT STATE ---
-  const [messages, setMessages] = useState<Message[]>([
-    {
-      id: '1',
-      role: 'model',
-      content: 'Olá! Sou o assistente virtual da BotoPremium. Como posso te ajudar hoje com a operação da sua unidade?'
-    }
-  ]);
+  const [messages, setMessages] = useState<Message[]>([]);
   const [input, setInput] = useState('');
   const [isLoading, setIsLoading] = useState(false);
+  
+  // --- HISTORY STATE ---
+  const [chatHistory, setChatHistory] = useState<ChatHistory[]>([]);
+  const [currentChatId, setCurrentChatId] = useState<string | null>(null);
+  const [isSidebarOpen, setIsSidebarOpen] = useState(false);
+  const [isHistoryLoading, setIsHistoryLoading] = useState(false);
+
   const messagesEndRef = useRef<HTMLDivElement>(null);
 
   // Auto-scroll to bottom
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [messages]);
+
+  // Initial load of history if authenticated
+  useEffect(() => {
+    if (token) {
+      loadHistory();
+      startNewChat();
+    }
+  }, [token]);
+
+  const loadHistory = async () => {
+    try {
+      const res = await fetch('/api/chats', {
+        headers: { 'Authorization': `Bearer ${token}` }
+      });
+      if (res.ok) {
+        const data = await res.json();
+        setChatHistory(data);
+      } else if (res.status === 401 || res.status === 403) {
+        handleLogout();
+      }
+    } catch (e) {
+      console.error('Falha ao carregar histórico:', e);
+    }
+  };
+
+  const loadChat = async (chatId: string) => {
+    if (isLoading) return;
+    setIsHistoryLoading(true);
+    setCurrentChatId(chatId);
+    if (window.innerWidth < 768) setIsSidebarOpen(false);
+
+    try {
+      const res = await fetch(`/api/chats/${chatId}/messages`, {
+        headers: { 'Authorization': `Bearer ${token}` }
+      });
+      if (res.ok) {
+        const data = await res.json();
+        setMessages(data);
+      }
+    } catch (e) {
+      console.error('Falha ao carregar mensagens:', e);
+    } finally {
+      setIsHistoryLoading(false);
+    }
+  };
+
+  const startNewChat = () => {
+    if (isLoading) return;
+    setCurrentChatId(null);
+    setMessages([
+      {
+        id: '1',
+        role: 'model',
+        content: 'Olá! Sou o assistente virtual da BotoPremium. Como posso te ajudar hoje com a operação da sua unidade?'
+      }
+    ]);
+    if (window.innerWidth < 768) setIsSidebarOpen(false);
+  };
 
   // --- AUTH HANDLERS ---
   const handleRequestCode = async (e: React.FormEvent) => {
@@ -51,6 +116,10 @@ export default function App() {
       
       if (!res.ok) throw new Error(data.error || 'Erro ao solicitar código');
       
+      if (data.devCode) {
+        alert(`[MODO DE TESTE]\nO serviço de e-mail ainda não possui as credenciais configuradas na plataforma de testes.\n\nSeu código de acesso é: ${data.devCode}`);
+      }
+
       setAuthStep('code');
     } catch (err: any) {
       setAuthError(err.message);
@@ -90,13 +159,8 @@ export default function App() {
     setAuthStep('email');
     setEmail('');
     setCode('');
-    setMessages([
-      {
-        id: '1',
-        role: 'model',
-        content: 'Olá! Sou o assistente virtual da BotoPremium. Como posso te ajudar hoje com a operação da sua unidade?'
-      }
-    ]);
+    setChatHistory([]);
+    startNewChat();
   };
 
   // --- CHAT HANDLERS ---
@@ -107,6 +171,7 @@ export default function App() {
     const userMessage = input.trim();
     setInput('');
     
+    // Optimistic User Message Update
     const newMessages: Message[] = [...messages, { id: Date.now().toString(), role: 'user', content: userMessage }];
     setMessages(newMessages);
     setIsLoading(true);
@@ -123,6 +188,7 @@ export default function App() {
         body: JSON.stringify({
           message: userMessage,
           history: historyToSend,
+          chatId: currentChatId
         }),
       });
 
@@ -141,6 +207,7 @@ export default function App() {
           { id: Date.now().toString(), role: 'model', content: data.text || 'Desculpe, não consegui processar a resposta.' }
         ]);
         setIsLoading(false);
+        await loadHistory();
         return;
       }
 
@@ -156,6 +223,7 @@ export default function App() {
       const decoder = new TextDecoder();
       let aiText = '';
       let buffer = '';
+      let serverChatId = currentChatId;
 
       if (reader) {
         while (true) {
@@ -172,8 +240,21 @@ export default function App() {
               if (dataStr === '[DONE]') break;
               try {
                 const data = JSON.parse(dataStr);
+                if (data.chatId && !serverChatId) {
+                   serverChatId = data.chatId;
+                   setCurrentChatId(data.chatId);
+                }
+                
                 if (data.error) {
-                  aiText += `\n\n**Erro:** ${data.error}`;
+                  const errorMsg = typeof data.error === 'string' ? data.error : 
+                                  (data.error.message || 'Erro desconhecido na API');
+                  
+                  if (errorMsg.includes('503') || errorMsg.includes('timed out')) {
+                     aiText = "A inteligência artificial do Google (Gemini) está demorando muito para responder neste momento (Servidor sobrecarregado). Por favor, aguarde alguns segundos e tente perguntar novamente.";
+                  } else {
+                     aiText += `\n\n**Erro:** ${errorMsg}`;
+                  }
+                  
                   setMessages((prev) => 
                     prev.map(m => m.id === responseId ? { ...m, content: aiText } : m)
                   );
@@ -190,6 +271,8 @@ export default function App() {
           }
         }
       }
+      // Finished stream, reload history to update title/time
+      await loadHistory();
     } catch (error: any) {
       console.error('Erro ao enviar mensagem:', error);
       setMessages((prev) => [
@@ -295,30 +378,84 @@ export default function App() {
 
   // --- RENDER CHAT SCREEN ---
   return (
-    <div className="flex flex-col h-screen bg-zinc-950 font-sans">
-      {/* Header */}
-      <header className="bg-zinc-900 border-b border-zinc-800 px-6 py-4 flex items-center justify-between shadow-sm z-10">
-        <div className="flex items-center gap-3">
-          <div className="bg-yellow-600 p-2 rounded-lg">
-            <Bot className="w-6 h-6 text-zinc-950" />
-          </div>
-          <div>
-            <h1 className="text-xl font-semibold text-gray-100 tracking-tight">Suporte ao Franqueado</h1>
-            <p className="text-sm text-yellow-500/80">Assistente Virtual Oficial</p>
-          </div>
+    <div className="flex h-screen bg-zinc-950 font-sans overflow-hidden">
+      
+      {/* Sidebar */}
+      <aside className={`${isSidebarOpen ? 'translate-x-0' : '-translate-x-full'} md:translate-x-0 fixed md:static inset-y-0 left-0 z-40 w-72 bg-zinc-900 border-r border-zinc-800 transition-transform duration-300 ease-in-out flex flex-col`}>
+        <div className="p-4 border-b border-zinc-800 flex items-center justify-between">
+           <button 
+             onClick={startNewChat}
+             className="flex-1 flex items-center justify-center gap-2 bg-yellow-600/10 hover:bg-yellow-600/20 text-yellow-500 border border-yellow-500/20 px-4 py-2.5 rounded-xl transition-colors font-medium"
+           >
+             <Plus className="w-4 h-4" /> Novo Chat
+           </button>
+           <button onClick={() => setIsSidebarOpen(false)} className="md:hidden ml-2 p-2 text-zinc-400 hover:text-white">
+             <X className="w-5 h-5"/>
+           </button>
         </div>
-        <button
-          onClick={handleLogout}
-          className="flex items-center gap-2 text-sm text-zinc-400 hover:text-red-400 transition-colors px-3 py-1.5 rounded-lg hover:bg-zinc-800"
-          title="Sair"
-        >
-          <LogOut className="w-4 h-4" />
-          <span className="hidden sm:inline">Sair</span>
-        </button>
-      </header>
+        
+        <div className="flex-1 overflow-y-auto py-4">
+          <div className="px-4 mb-2 text-xs font-medium text-zinc-500 uppercase tracking-wider">Histórico Recente</div>
+          {isHistoryLoading && chatHistory.length === 0 ? (
+             <div className="flex justify-center py-4"><Loader2 className="w-5 h-5 text-zinc-500 animate-spin" /></div>
+          ) : chatHistory.length === 0 ? (
+            <div className="px-4 py-4 text-sm text-zinc-500 text-center">Nenhum chat salvo ainda.</div>
+          ) : (
+            <ul className="space-y-1 px-2">
+              {chatHistory.map((chat) => (
+                <li key={chat.id}>
+                  <button
+                    onClick={() => loadChat(chat.id)}
+                    className={`w-full text-left px-3 py-2.5 rounded-lg flex items-center gap-3 transition-colors ${currentChatId === chat.id ? 'bg-zinc-800 text-yellow-500' : 'text-zinc-300 hover:bg-zinc-800 hover:text-white'}`}
+                  >
+                    <MessageSquare className="w-4 h-4 shrink-0" />
+                    <span className="truncate text-sm">{chat.title}</span>
+                  </button>
+                </li>
+              ))}
+            </ul>
+          )}
+        </div>
+        
+        <div className="p-4 border-t border-zinc-800">
+           <div className="flex items-center gap-3">
+             <div className="w-8 h-8 rounded-full bg-zinc-800 flex items-center justify-center text-zinc-400 shrink-0">
+               <User className="w-4 h-4" />
+             </div>
+             <div className="flex-1 min-w-0">
+               <p className="text-sm font-medium text-white truncate">{email}</p>
+             </div>
+             <button
+                onClick={handleLogout}
+                className="p-2 text-zinc-400 hover:text-red-400 transition-colors rounded-lg hover:bg-zinc-800"
+                title="Sair"
+             >
+                <LogOut className="w-4 h-4" />
+             </button>
+           </div>
+        </div>
+      </aside>
 
-      {/* Chat Area */}
-      <main className="flex-1 overflow-y-auto p-6 space-y-6">
+      {/* Main Content */}
+      <div className="flex-1 flex flex-col min-w-0 h-screen">
+        {/* Header */}
+        <header className="bg-zinc-900 border-b border-zinc-800 px-4 md:px-6 py-4 flex items-center gap-4 shadow-sm z-10 shrink-0">
+          <button onClick={() => setIsSidebarOpen(true)} className="md:hidden p-2 -ml-2 text-zinc-400 hover:text-white">
+             <Menu className="w-6 h-6"/>
+          </button>
+          <div className="flex items-center gap-3">
+            <div className="bg-yellow-600 p-2 rounded-lg">
+              <Bot className="w-6 h-6 text-zinc-950" />
+            </div>
+            <div>
+              <h1 className="text-xl font-semibold text-gray-100 tracking-tight leading-tight">Suporte ao Franqueado</h1>
+              <p className="text-xs md:text-sm text-yellow-500/80">Assistente Virtual Oficial</p>
+            </div>
+          </div>
+        </header>
+
+        {/* Chat Area */}
+        <main className="flex-1 overflow-y-auto p-4 md:p-6 space-y-6">
         <div className="max-w-3xl mx-auto space-y-6">
           {messages.map((msg) => (
             <div
@@ -395,6 +532,7 @@ export default function App() {
           </p>
         </div>
       </footer>
+      </div>
     </div>
   );
 }

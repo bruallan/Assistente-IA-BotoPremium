@@ -1,0 +1,51 @@
+{
+  "entities": {
+    "Chat": {
+      "title": "Chat",
+      "description": "A conversation session for a user.",
+      "type": "object",
+      "properties": {
+        "ownerEmail": { "type": "string" },
+        "title": { "type": "string" },
+        "updatedAt": { "type": "string" },
+        "createdAt": { "type": "string" }
+      },
+      "required": ["ownerEmail", "title", "updatedAt", "createdAt"]
+    },
+    "Message": {
+      "title": "Message",
+      "description": "A single message in a chat.",
+      "type": "object",
+      "properties": {
+        "role": { "type": "string", "enum": ["user", "model"] },
+        "content": { "type": "string" },
+        "createdAt": { "type": "string" }
+      },
+      "required": ["role", "content", "createdAt"]
+    },
+    "DocumentChunk": {
+       "title": "DocumentChunk",
+       "description": "RAG chunk",
+       "type": "object",
+       "properties": {
+          "text": { "type": "string" },
+          "source": { "type": "string" }
+       },
+       "required": ["text", "source"]
+    }
+  },
+  "firestore": {
+    "/chats/{chatId}": {
+      "schema": { "$ref": "#/entities/Chat" },
+      "description": "Chat sessions owned by franqueados."
+    },
+    "/chats/{chatId}/messages/{messageId}": {
+      "schema": { "$ref": "#/entities/Message" },
+      "description": "Messages belonging to a chat."
+    },
+    "/knowledge_chunks/{chunkId}": {
+      "schema": { "$ref": "#/entities/DocumentChunk" },
+      "description": "Knowledge base paragraphs."
+    }
+  }
+}
