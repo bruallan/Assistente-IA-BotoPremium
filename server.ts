@@ -5,6 +5,8 @@ import { SYSTEM_INSTRUCTION } from './src/knowledge-base.ts';
 import path from 'path';
 import fs from 'fs';
 import { fileURLToPath } from 'url';
+import jwt from 'jsonwebtoken';
+import nodemailer from 'nodemailer';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -15,6 +17,37 @@ const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
 // Array to store the uploaded files URIs
 let uploadedFiles: any[] = [];
 let isUploadingManuals = false;
+
+// --- AUTHENTICATION SETUP ---
+const AUTHORIZED_EMAILS = ['brunoallan004@gmail.com'];
+const JWT_SECRET = process.env.JWT_SECRET || 'sua_chave_secreta_super_segura_aqui';
+
+// In-memory store for OTP codes (email -> { code, expiresAt })
+const otpStore = new Map<string, { code: string; expiresAt: number }>();
+
+// Configure email transporter (Nodemailer)
+const transporter = nodemailer.createTransport({
+  service: 'gmail',
+  auth: {
+    user: process.env.EMAIL_USER, // Seu email do Gmail
+    pass: process.env.EMAIL_PASS, // Senha de App do Gmail
+  },
+});
+
+// Middleware to protect routes
+const authenticateToken = (req: any, res: any, next: any) => {
+  const authHeader = req.headers['authorization'];
+  const token = authHeader && authHeader.split(' ')[1];
+
+  if (!token) return res.status(401).json({ error: 'Acesso negado. Token não fornecido.' });
+
+  jwt.verify(token, JWT_SECRET, (err: any, user: any) => {
+    if (err) return res.status(403).json({ error: 'Token inválido ou expirado.' });
+    req.user = user;
+    next();
+  });
+};
+// --- END AUTH SETUP ---
 
 // Function to upload PDFs to Gemini File API
 async function uploadManuals() {
@@ -84,8 +117,86 @@ async function startServer() {
     res.status(200).send('OK');
   });
 
+  // --- AUTH ROUTES ---
+
+  // 1. Request a 6-digit code
+  app.post('/api/auth/request-code', async (req, res) => {
+    const { email } = req.body;
+
+    if (!email) {
+      return res.status(400).json({ error: 'Email é obrigatório.' });
+    }
+
+    // Check if email is authorized (Future: This will check the Sults API)
+    if (!AUTHORIZED_EMAILS.includes(email.toLowerCase())) {
+      return res.status(403).json({ error: 'Este email não está autorizado a acessar o sistema.' });
+    }
+
+    // Generate a random 6-digit code
+    const code = Math.floor(100000 + Math.random() * 900000).toString();
+    const expiresAt = Date.now() + 10 * 60 * 1000; // 10 minutes from now
+
+    otpStore.set(email.toLowerCase(), { code, expiresAt });
+
+    console.log(`[AUTH] Código gerado para ${email}: ${code}`); // For debugging/fallback
+
+    // Try to send the email
+    if (process.env.EMAIL_USER && process.env.EMAIL_PASS) {
+      try {
+        await transporter.sendMail({
+          from: `"Assistente de Manuais" <${process.env.EMAIL_USER}>`,
+          to: email,
+          subject: 'Seu código de acesso',
+          text: `Olá!\n\nSeu código de acesso para o Assistente de Manuais é: ${code}\n\nEste código expira em 10 minutos.`,
+          html: `<p>Olá!</p><p>Seu código de acesso para o Assistente de Manuais é: <strong style="font-size: 24px;">${code}</strong></p><p>Este código expira em 10 minutos.</p>`,
+        });
+        console.log(`[AUTH] Email enviado com sucesso para ${email}`);
+      } catch (error) {
+        console.error(`[AUTH] Erro ao enviar email para ${email}:`, error);
+      }
+    } else {
+      console.log('[AUTH] Aviso: EMAIL_USER e EMAIL_PASS não configurados. O email não foi enviado, mas o código foi gerado no console.');
+    }
+
+    res.json({ message: 'Código enviado com sucesso.' });
+  });
+
+  // 2. Verify the 6-digit code and issue JWT
+  app.post('/api/auth/verify-code', (req, res) => {
+    const { email, code } = req.body;
+
+    if (!email || !code) {
+      return res.status(400).json({ error: 'Email e código são obrigatórios.' });
+    }
+
+    const storedData = otpStore.get(email.toLowerCase());
+
+    if (!storedData) {
+      return res.status(400).json({ error: 'Nenhum código solicitado para este email.' });
+    }
+
+    if (Date.now() > storedData.expiresAt) {
+      otpStore.delete(email.toLowerCase());
+      return res.status(400).json({ error: 'O código expirou. Solicite um novo.' });
+    }
+
+    if (storedData.code !== code) {
+      return res.status(400).json({ error: 'Código incorreto.' });
+    }
+
+    // Code is valid! Delete it so it can't be reused
+    otpStore.delete(email.toLowerCase());
+
+    // Generate JWT token
+    const token = jwt.sign({ email: email.toLowerCase() }, JWT_SECRET, { expiresIn: '7d' }); // Token valid for 7 days
+
+    res.json({ token, email: email.toLowerCase() });
+  });
+
+  // --- END AUTH ROUTES ---
+
   // API Route for Chat
-  app.post('/api/chat', async (req, res) => {
+  app.post('/api/chat', authenticateToken, async (req, res) => {
     try {
       if (isUploadingManuals) {
         return res.json({ text: "Estou lendo e processando os manuais da franquia no momento. Isso pode levar alguns minutos. Por favor, tente perguntar novamente em instantes." });
@@ -137,19 +248,42 @@ async function startServer() {
         { text: SYSTEM_INSTRUCTION }
       ];
 
-      const response = await ai.models.generateContent({
-        model: 'gemini-3-flash-preview',
-        contents: contents,
-        config: {
-          systemInstruction: { parts: systemParts },
-          temperature: 0.1, // Low temperature for factual answers
-        }
-      });
+      res.setHeader('Content-Type', 'text/event-stream');
+      res.setHeader('Cache-Control', 'no-cache');
+      res.setHeader('Connection', 'keep-alive');
+      res.flushHeaders();
 
-      res.json({ text: response.text });
+      try {
+        const responseStream = await ai.models.generateContentStream({
+          model: 'gemini-2.5-flash',
+          contents: contents,
+          config: {
+            systemInstruction: { parts: systemParts },
+            temperature: 0.1, // Low temperature for factual answers
+          }
+        });
+
+        for await (const chunk of responseStream) {
+          if (chunk.text) {
+            res.write(`data: ${JSON.stringify({ text: chunk.text })}\n\n`);
+          }
+        }
+        res.write('data: [DONE]\n\n');
+        res.end();
+      } catch (modelError: any) {
+        console.error('Error from Gemini API:', modelError);
+        res.write(`data: ${JSON.stringify({ error: modelError.message || 'Erro ao processar a mensagem na API.' })}\n\n`);
+        res.write('data: [DONE]\n\n');
+        res.end();
+      }
     } catch (error) {
       console.error('Error generating content:', error);
-      res.status(500).json({ error: 'Erro ao processar a mensagem no servidor.' });
+      if (!res.headersSent) {
+        res.status(500).json({ error: 'Erro interno ao processar a mensagem no servidor.' });
+      } else {
+        res.write(`data: ${JSON.stringify({ error: 'Erro interno no servidor.' })}\n\n`);
+        res.end();
+      }
     }
   });
 
