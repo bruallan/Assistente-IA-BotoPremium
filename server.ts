@@ -6,8 +6,12 @@ import path from 'path';
 import { fileURLToPath } from 'url';
 import jwt from 'jsonwebtoken';
 import nodemailer from 'nodemailer';
-import * as admin from 'firebase-admin';
-import firebaseConfig from './firebase-applet-config.json' assert { type: 'json' };
+import { createRequire } from 'module';
+
+const require = createRequire(import.meta.url);
+const admin = require('firebase-admin');
+const firebaseConfig = require('./firebase-applet-config.json');
+
 import { processManualsForRAG, searchKnowledgeBase } from './src/ragService.ts';
 
 const __filename = fileURLToPath(import.meta.url);
@@ -21,7 +25,7 @@ if (!admin.apps.length) {
     projectId: firebaseConfig.projectId
   });
 }
-const db = admin.firestore();
+const db = admin.firestore(firebaseConfig.firestoreDatabaseId);
 
 // --- AUTHENTICATION SETUP ---
 const AUTHORIZED_EMAILS = ['brunoallan004@gmail.com'];
@@ -250,6 +254,165 @@ async function startServer() {
       }
     }
   });
+
+  // -- WHATSAPP API INTEGRATION --
+  const WHATSAPP_VERIFY_TOKEN = process.env.WHATSAPP_VERIFY_TOKEN || 'boto_premium_verify_token_123';
+  const WHATSAPP_TOKEN = process.env.WHATSAPP_TOKEN || 'EAAi9ZAZAvaAqQBRbY1KpELQn5KxQ4J9qUHYhmWpDQpY5ZCNknGaHnZCeVQoNYCHYJV8zbGD0ZC8IoK4MRmFXV6f9mqpmMuvMkPlIFmCMjnJm1yJ8ZCJ8UoCQdERZA9JwBWeuik5hTtZA24kUFxORTsKHvxItYhCMJIYPZALVunQZBOTxiqBpN5SUTZA6tmsqEHadO23dgZDZD';
+  const WHATSAPP_PHONE_NUMBER_ID = process.env.WHATSAPP_PHONE_NUMBER_ID || '1166257203227529';
+
+  app.get('/webhook', (req: any, res: any) => {
+    let mode = req.query['hub.mode'];
+    let token = req.query['hub.verify_token'];
+    let challenge = req.query['hub.challenge'];
+    
+    if (mode && token) {
+      if (mode === 'subscribe' && token === WHATSAPP_VERIFY_TOKEN) {
+        console.log('WEBHOOK_VERIFIED');
+        res.status(200).send(challenge);
+      } else {
+        res.sendStatus(403);
+      }
+    } else {
+      res.sendStatus(400);
+    }
+  });
+
+  async function sendWhatsAppMessage(to: string, text: string) {
+    try {
+      await fetch(`https://graph.facebook.com/v18.0/${WHATSAPP_PHONE_NUMBER_ID}/messages`, {
+        method: 'POST',
+        headers: {
+          'Authorization': `Bearer ${WHATSAPP_TOKEN}`,
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({
+          messaging_product: 'whatsapp',
+          to: to,
+          type: 'text',
+          text: { body: text }
+        })
+      });
+    } catch (e) {
+      console.error('Erro ao enviar mensagem no WhatsApp:', e);
+    }
+  }
+
+  app.post('/webhook', async (req: any, res: any) => {
+    const body = req.body;
+    
+    if (body.object) {
+      if (
+        body.entry && body.entry[0].changes && body.entry[0].changes[0] &&
+        body.entry[0].changes[0].value.messages && body.entry[0].changes[0].value.messages[0]
+      ) {
+        let phoneNumberId = body.entry[0].changes[0].value.metadata.phone_number_id;
+        let from = body.entry[0].changes[0].value.messages[0].from; 
+        let payloadMsg = body.entry[0].changes[0].value.messages[0];
+
+        // Send 200 OK immediately
+        res.sendStatus(200);
+
+        if (payloadMsg.type === 'text') {
+           let msgBody = payloadMsg.text.body;
+           handleWhatsAppMessageAsync(from, msgBody);
+        }
+      } else {
+        res.sendStatus(200);
+      }
+    } else {
+      res.sendStatus(404);
+    }
+  });
+
+  async function handleWhatsAppMessageAsync(from: string, message: string) {
+    try {
+      const whatsappUserEmail = `whatsapp:${from}`;
+      
+      // Get or Create Chat for this WhatsApp User
+      const chatsSnapshot = await db.collection('chats')
+          .where('ownerEmail', '==', whatsappUserEmail)
+          .orderBy('updatedAt', 'desc')
+          .limit(1)
+          .get();
+
+      let targetChatId = '';
+      if (chatsSnapshot.empty) {
+          const chatRef = db.collection('chats').doc();
+          targetChatId = chatRef.id;
+          await chatRef.set({
+             ownerEmail: whatsappUserEmail,
+             title: `WhatsApp: ${from}`,
+             createdAt: admin.firestore.FieldValue.serverTimestamp(),
+             updatedAt: admin.firestore.FieldValue.serverTimestamp()
+          });
+      } else {
+          targetChatId = chatsSnapshot.docs[0].id;
+          await db.collection('chats').doc(targetChatId).update({
+             updatedAt: admin.firestore.FieldValue.serverTimestamp()
+          });
+      }
+
+      // Fetch Chat History
+      const msgsSnapshot = await db.collection('chats').doc(targetChatId).collection('messages')
+           .orderBy('createdAt', 'asc')
+           .limit(20)
+           .get();
+
+      const history = msgsSnapshot.docs.map(doc => doc.data());
+
+      // Save User Message
+      await db.collection('chats').doc(targetChatId).collection('messages').doc().set({
+          role: 'user',
+          content: message,
+          createdAt: admin.firestore.FieldValue.serverTimestamp()
+      });
+
+      const contents = history.map((msg: any) => ({
+        role: msg.role === 'user' ? 'user' : 'model',
+        parts: [{ text: msg.content }]
+      }));
+
+      // RAG Search
+      const topChunks = await searchKnowledgeBase(db, message, 3);
+      let ragContext = '';
+      if (topChunks.length > 0) {
+          ragContext = '\n\n**CONTEXTO EXTRAÍDO DOS MANUAIS DA FRANQUIA PARA REFERÊNCIA:**\n';
+          topChunks.forEach((c: any, i: number) => {
+             ragContext += `\nTrecho ${i+1} (do arquivo ${c.source}):\n"${c.text}"\n`;
+          });
+      }
+
+      const newUserParts: any[] = [{ text: message + ragContext }];
+      contents.push({ role: 'user', parts: newUserParts });
+
+      const systemParts: any[] = [{ text: SYSTEM_INSTRUCTION }];
+
+      const response = await ai.models.generateContent({
+        model: 'gemini-2.5-flash',
+        contents: contents,
+        config: {
+           systemInstruction: { parts: systemParts },
+           temperature: 0.1,
+        }
+      });
+
+      const aiText = response.text || 'Desculpe, não consegui gerar uma resposta.';
+
+      // Save AI Response
+      await db.collection('chats').doc(targetChatId).collection('messages').doc().set({
+          role: 'model',
+          content: aiText,
+          createdAt: admin.firestore.FieldValue.serverTimestamp()
+      });
+
+      // Send to WhatsApp
+      await sendWhatsAppMessage(from, aiText);
+
+    } catch (e: any) {
+      console.error('Erro ao processar mensagem do WhatsApp:', e);
+      await sendWhatsAppMessage(from, "Desculpe, encontrei um erro interno ao processar sua dúvida. Tente novamente mais tarde.");
+    }
+  }
 
   if (process.env.NODE_ENV !== 'production') {
     const vite = await createViteServer({

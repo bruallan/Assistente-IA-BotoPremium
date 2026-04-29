@@ -1,0 +1,90 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    // 0. Global Safety Net
+    match /{document=**} {
+      allow read, write: if false;
+    }
+
+    // Phase 3: Primitives
+    function isValidId(id) {
+      return id is string && id.size() <= 128 && id.matches('^[a-zA-Z0-9_\\-]+$');
+    }
+    function incoming() { return request.resource.data; }
+    function existing() { return resource.data; }
+    // We expect a custom token with an email claim if using frontend auth
+    function isSignedIn() { return request.auth != null; }
+    function isOwner(email) { return isSignedIn() && request.auth.token.email == email; }
+
+    // Validation Blueprint for Chat
+    function isValidChat(data) {
+      return data.keys().hasAll(['ownerEmail', 'title', 'updatedAt', 'createdAt']) &&
+             data.keys().size() == 4 &&
+             data.ownerEmail is string && data.ownerEmail.size() <= 100 &&
+             data.title is string && data.title.size() <= 200 &&
+             data.updatedAt is timestamp &&
+             data.createdAt is timestamp;
+    }
+
+    // Validation Blueprint for Message
+    function isValidMessage(data) {
+      return data.keys().hasAll(['role', 'content', 'createdAt']) &&
+             data.keys().size() == 3 &&
+             data.role is string && (data.role == 'user' || data.role == 'model') &&
+             data.content is string && data.content.size() <= 50000 &&
+             data.createdAt is timestamp;
+    }
+
+    // Validation Blueprint for Chunk (System Only, no direct client creation)
+    function isValidChunk(data) {
+       return data.keys().hasAll(['text', 'source']) &&
+              data.keys().size() == 2 &&
+              data.text is string && data.text.size() <= 10000 &&
+              data.source is string && data.source.size() <= 200;
+    }
+
+    match /chats/{chatId} {
+      // 8. Secure List Queries: Check resource.data
+      allow read: if isOwner(existing().ownerEmail) && isValidId(chatId);
+      
+      allow create: if isOwner(incoming().ownerEmail) &&
+                       isValidId(chatId) &&
+                       isValidChat(incoming()) &&
+                       incoming().createdAt == request.time &&
+                       incoming().updatedAt == request.time;
+                       
+      allow update: if isOwner(existing().ownerEmail) &&
+                       isValidId(chatId) &&
+                       isValidChat(incoming()) &&
+                       incoming().createdAt == existing().createdAt &&
+                       incoming().ownerEmail == existing().ownerEmail &&
+                       incoming().updatedAt == request.time &&
+                       incoming().diff(existing()).affectedKeys().hasOnly(['title', 'updatedAt']);
+                       
+      allow delete: if isOwner(existing().ownerEmail) && isValidId(chatId);
+
+      match /messages/{messageId} {
+        // Master Gate: Verify parent exists and belongs to user
+        function verifyParent() {
+           return get(/databases/$(database)/documents/chats/$(chatId)).data.ownerEmail == request.auth.token.email;
+        }
+
+        allow read: if verifyParent() && isValidId(messageId);
+        
+        allow create: if verifyParent() &&
+                         isValidId(messageId) &&
+                         isValidMessage(incoming()) &&
+                         incoming().createdAt == request.time;
+                         
+        // Messages are immutable once sent
+        allow update: if false;
+        allow delete: if verifyParent() && isValidId(messageId);
+      }
+    }
+
+    match /knowledge_chunks/{chunkId} {
+       // Knowledge chunks are strictly backend read/write
+       allow read, write: if false;
+    }
+  }
+}
