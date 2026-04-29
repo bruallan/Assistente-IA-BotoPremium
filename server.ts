@@ -6,10 +6,11 @@ import path from 'path';
 import { fileURLToPath } from 'url';
 import jwt from 'jsonwebtoken';
 import nodemailer from 'nodemailer';
+import { initializeApp, getApps } from 'firebase-admin/app';
+import { getFirestore, FieldValue } from 'firebase-admin/firestore';
 import { createRequire } from 'module';
 
 const require = createRequire(import.meta.url);
-const admin = require('firebase-admin');
 const firebaseConfig = require('./firebase-applet-config.json');
 
 import { processManualsForRAG, searchKnowledgeBase } from './src/ragService.ts';
@@ -20,12 +21,12 @@ const __dirname = path.dirname(__filename);
 const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
 
 // Initialize Firebase Admin
-if (!admin.apps.length) {
-  admin.initializeApp({
+if (getApps().length === 0) {
+  initializeApp({
     projectId: firebaseConfig.projectId
   });
 }
-const db = admin.firestore(firebaseConfig.firestoreDatabaseId);
+const db = getFirestore(firebaseConfig.firestoreDatabaseId);
 
 // --- AUTHENTICATION SETUP ---
 const AUTHORIZED_EMAILS = ['brunoallan004@gmail.com'];
@@ -166,12 +167,12 @@ async function startServer() {
           await chatRef.set({
              ownerEmail: userEmail,
              title: message.substring(0, 40) + (message.length > 40 ? '...' : ''),
-             createdAt: admin.firestore.FieldValue.serverTimestamp(),
-             updatedAt: admin.firestore.FieldValue.serverTimestamp()
+             createdAt: FieldValue.serverTimestamp(),
+             updatedAt: FieldValue.serverTimestamp()
           });
       } else {
           await db.collection('chats').doc(targetChatId).update({
-             updatedAt: admin.firestore.FieldValue.serverTimestamp()
+             updatedAt: FieldValue.serverTimestamp()
           });
       }
 
@@ -180,7 +181,7 @@ async function startServer() {
       await userMsgRef.set({
           role: 'user',
           content: message,
-          createdAt: admin.firestore.FieldValue.serverTimestamp()
+          createdAt: FieldValue.serverTimestamp()
       });
 
       // Format history
@@ -235,7 +236,7 @@ async function startServer() {
         await aiMsgRef.set({
             role: 'model',
             content: fullAiText,
-            createdAt: admin.firestore.FieldValue.serverTimestamp()
+            createdAt: FieldValue.serverTimestamp()
         });
 
         res.end();
@@ -342,13 +343,13 @@ async function startServer() {
           await chatRef.set({
              ownerEmail: whatsappUserEmail,
              title: `WhatsApp: ${from}`,
-             createdAt: admin.firestore.FieldValue.serverTimestamp(),
-             updatedAt: admin.firestore.FieldValue.serverTimestamp()
+             createdAt: FieldValue.serverTimestamp(),
+             updatedAt: FieldValue.serverTimestamp()
           });
       } else {
           targetChatId = chatsSnapshot.docs[0].id;
           await db.collection('chats').doc(targetChatId).update({
-             updatedAt: admin.firestore.FieldValue.serverTimestamp()
+             updatedAt: FieldValue.serverTimestamp()
           });
       }
 
@@ -364,7 +365,7 @@ async function startServer() {
       await db.collection('chats').doc(targetChatId).collection('messages').doc().set({
           role: 'user',
           content: message,
-          createdAt: admin.firestore.FieldValue.serverTimestamp()
+          createdAt: FieldValue.serverTimestamp()
       });
 
       const contents = history.map((msg: any) => ({
@@ -402,7 +403,7 @@ async function startServer() {
       await db.collection('chats').doc(targetChatId).collection('messages').doc().set({
           role: 'model',
           content: aiText,
-          createdAt: admin.firestore.FieldValue.serverTimestamp()
+          createdAt: FieldValue.serverTimestamp()
       });
 
       // Send to WhatsApp

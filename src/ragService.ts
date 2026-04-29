@@ -3,9 +3,9 @@ import fs from 'fs';
 import path from 'path';
 import { fileURLToPath } from 'url';
 import { createRequire } from 'module';
+import { Firestore } from 'firebase-admin/firestore';
 
 const require = createRequire(import.meta.url);
-const admin = require('firebase-admin');
 const pdfParse = require('pdf-parse');
 
 const __filename = fileURLToPath(import.meta.url);
@@ -29,7 +29,7 @@ function cosineSimilarity(A: number[], B: number[]) {
     return (dotproduct)/((mA)*(mB));
 }
 
-export async function processManualsForRAG(db: admin.firestore.Firestore) {
+export async function processManualsForRAG(db: Firestore) {
     if (isProcessingRAG) return;
     isProcessingRAG = true;
     
@@ -112,7 +112,7 @@ export async function processManualsForRAG(db: admin.firestore.Firestore) {
     }
 }
 
-export async function searchKnowledgeBase(db: admin.firestore.Firestore, query: string, topK: number = 4) {
+export async function searchKnowledgeBase(db: Firestore, query: string, topK: number = 4) {
     try {
         console.log(`[RAG] Gerando embedding para a pergunta: "${query}"...`);
         const queryResult = await ai.models.embedContent({
