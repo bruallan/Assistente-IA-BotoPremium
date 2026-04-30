@@ -6,23 +6,40 @@ import path from 'path';
 import { fileURLToPath } from 'url';
 import jwt from 'jsonwebtoken';
 import nodemailer from 'nodemailer';
-import { initializeApp, getApps } from 'firebase-admin/app';
+import dns from 'dns';
+import multer from 'multer';
+
+dns.setDefaultResultOrder('ipv4first');
+
+import { initializeApp, getApps, cert } from 'firebase-admin/app';
 import { getFirestore, FieldValue } from 'firebase-admin/firestore';
 import { createRequire } from 'module';
 
 const require = createRequire(import.meta.url);
 const firebaseConfig = require('./firebase-applet-config.json');
 
-import { processManualsForRAG, searchKnowledgeBase } from './src/ragService.ts';
+import { searchKnowledgeBase, processPdfForRAG } from './src/ragService.ts';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
 const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
+const upload = multer({ storage: multer.memoryStorage() });
 
 // Initialize Firebase Admin
 if (getApps().length === 0) {
+  let credential;
+  if (process.env.FIREBASE_SERVICE_ACCOUNT_KEY) {
+    try {
+      const serviceAccount = JSON.parse(process.env.FIREBASE_SERVICE_ACCOUNT_KEY);
+      credential = cert(serviceAccount);
+    } catch (error) {
+      console.error('Erro ao fazer parse de FIREBASE_SERVICE_ACCOUNT_KEY:', error);
+    }
+  }
+
   initializeApp({
+    credential: credential,
     projectId: firebaseConfig.projectId
   });
 }
@@ -151,6 +168,85 @@ async function startServer() {
        console.error('Erro ao buscar mensagens:', err);
        res.status(500).json({ error: 'Erro ao buscar as mensagens do chat.' });
      }
+  });
+
+
+  // --- ADMIN KNOWLEDGE BASE ROUTES ---
+  const requireAdmin = (req: any, res: any, next: any) => {
+    if (!AUTHORIZED_EMAILS.includes(req.user.email.toLowerCase())) {
+        return res.status(403).json({ error: 'Acesso negado: Administrador apenas.' });
+    }
+    next();
+  };
+
+  app.get('/api/admin/knowledge', authenticateToken, requireAdmin, async (req: any, res: any) => {
+      try {
+          const snapshot = await db.collection('knowledge_files').orderBy('uploadedAt', 'desc').get();
+          const files = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+          res.json(files);
+      } catch (e) {
+          console.error('Erro ao buscar arquivos:', e);
+          res.status(500).json({ error: 'Erro ao buscar arquivos.' });
+      }
+  });
+
+  app.post('/api/admin/knowledge/upload', authenticateToken, requireAdmin, upload.single('file'), async (req: any, res: any) => {
+      try {
+          if (!req.file) return res.status(400).json({ error: 'Arquivo é obrigatório.' });
+          
+          // Multer encodes the originalname as utf-8, but depending on the setup it might be latin1. Decoding it safely is a good practice.
+          const filename = Buffer.from(req.file.originalname, 'latin1').toString('utf8');
+          
+          if (!filename.toLowerCase().endsWith('.pdf')) {
+              return res.status(400).json({ error: 'Apenas PDFs são suportados.' });
+          }
+
+          // Check if file already exists
+          const existing = await db.collection('knowledge_files').where('filename', '==', filename).get();
+          if (!existing.empty) {
+              return res.status(400).json({ error: 'Um arquivo com este nome já existe.' });
+          }
+
+          // Processing RAG
+          await processPdfForRAG(db, req.file.buffer, filename);
+
+          // Save metadata
+          const fileRef = db.collection('knowledge_files').doc();
+          await fileRef.set({
+             filename,
+             uploadedAt: FieldValue.serverTimestamp()
+          });
+
+          res.json({ message: 'Arquivo processado com sucesso.' });
+      } catch (e) {
+          console.error('Erro ao processar upload:', e);
+          res.status(500).json({ error: 'Erro ao processar o arquivo.' });
+      }
+  });
+
+  app.delete('/api/admin/knowledge/:id', authenticateToken, requireAdmin, async (req: any, res: any) => {
+      try {
+          const fileDoc = await db.collection('knowledge_files').doc(req.params.id).get();
+          if (!fileDoc.exists) return res.status(404).json({ error: 'Arquivo não encontrado.' });
+          
+          const filename = fileDoc.data()?.filename;
+          
+          // Delete metadata
+          await db.collection('knowledge_files').doc(req.params.id).delete();
+
+          // Delete all chunks associated with this file
+          const chunksSnapshot = await db.collection('knowledge_chunks').where('source', '==', filename).get();
+          const batch = db.batch();
+          chunksSnapshot.forEach(doc => {
+              batch.delete(doc.ref);
+          });
+          await batch.commit();
+
+          res.json({ message: 'Arquivo removido com sucesso.' });
+      } catch (e) {
+          console.error('Erro ao excluir:', e);
+          res.status(500).json({ error: 'Erro ao excluir o arquivo.' });
+      }
   });
 
   // -- CHAT AI ROUTE --
@@ -431,9 +527,6 @@ async function startServer() {
 
   app.listen(PORT, '0.0.0.0', async () => {
     console.log(`Server running on http://localhost:${PORT}`);
-    
-    // Inicia o processamento RAG dos manuais em background
-    processManualsForRAG(db).catch(console.error);
 
     setInterval(() => {
       const appUrl = process.env.APP_URL || `http://localhost:${PORT}`;

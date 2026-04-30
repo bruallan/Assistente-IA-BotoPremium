@@ -1,6 +1,7 @@
 import { useState, useRef, useEffect } from 'react';
-import { Send, Bot, User, Loader2, Mail, KeyRound, LogOut, MessageSquare, Plus, Menu, X } from 'lucide-react';
+import { Send, Bot, User, Loader2, Mail, KeyRound, LogOut, MessageSquare, Plus, Menu, X, Database } from 'lucide-react';
 import ReactMarkdown from 'react-markdown';
+import { AdminKnowledgeBase } from './components/AdminKnowledgeBase.tsx';
 
 type Message = {
   id: string;
@@ -33,6 +34,9 @@ export default function App() {
   const [currentChatId, setCurrentChatId] = useState<string | null>(null);
   const [isSidebarOpen, setIsSidebarOpen] = useState(false);
   const [isHistoryLoading, setIsHistoryLoading] = useState(false);
+  
+  // --- ADMIN STATE ---
+  const [isAdminView, setIsAdminView] = useState(false);
 
   const messagesEndRef = useRef<HTMLDivElement>(null);
 
@@ -69,6 +73,7 @@ export default function App() {
     if (isLoading) return;
     setIsHistoryLoading(true);
     setCurrentChatId(chatId);
+    setIsAdminView(false);
     if (window.innerWidth < 768) setIsSidebarOpen(false);
 
     try {
@@ -89,6 +94,7 @@ export default function App() {
   const startNewChat = () => {
     if (isLoading) return;
     setCurrentChatId(null);
+    setIsAdminView(false);
     setMessages([
       {
         id: '1',
@@ -160,6 +166,7 @@ export default function App() {
     setEmail('');
     setCode('');
     setChatHistory([]);
+    setIsAdminView(false);
     startNewChat();
   };
 
@@ -418,6 +425,15 @@ export default function App() {
         </div>
         
         <div className="p-4 border-t border-zinc-800">
+           {email === 'brunoallan004@gmail.com' && (
+             <button
+               onClick={() => { setIsAdminView(true); setIsSidebarOpen(false); }}
+               className={`w-full flex items-center justify-center gap-2 mb-4 py-2.5 rounded-lg transition-colors text-sm font-medium border
+                 ${isAdminView ? 'bg-indigo-500/20 text-indigo-400 border-indigo-500/30' : 'bg-zinc-800/50 text-zinc-400 hover:bg-zinc-800 hover:text-white border-transparent'}`}
+             >
+               <Database className="w-4 h-4" /> Administrar Base IA
+             </button>
+           )}
            <div className="flex items-center gap-3">
              <div className="w-8 h-8 rounded-full bg-zinc-800 flex items-center justify-center text-zinc-400 shrink-0">
                <User className="w-4 h-4" />
@@ -437,6 +453,9 @@ export default function App() {
       </aside>
 
       {/* Main Content */}
+      {isAdminView && token ? (
+         <AdminKnowledgeBase token={token} onClose={() => setIsAdminView(false)} />
+      ) : (
       <div className="flex-1 flex flex-col min-w-0 h-screen">
         {/* Header */}
         <header className="bg-zinc-900 border-b border-zinc-800 px-4 md:px-6 py-4 flex items-center gap-4 shadow-sm z-10 shrink-0">
@@ -533,6 +552,7 @@ export default function App() {
         </div>
       </footer>
       </div>
+      )}
     </div>
   );
 }
